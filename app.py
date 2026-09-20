@@ -20,8 +20,18 @@ if str(ROOT) not in sys.path:
 # Homebrew ffmpeg on Apple Silicon
 os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize
-from PyQt6.QtGui import QImage, QKeyEvent, QPixmap, QFont, QCloseEvent, QAction, QTransform
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize, QEvent, QPointF
+from PyQt6.QtGui import (
+    QImage,
+    QKeyEvent,
+    QPixmap,
+    QFont,
+    QCloseEvent,
+    QAction,
+    QTransform,
+    QWheelEvent,
+    QMouseEvent,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QGridLayout,
@@ -47,6 +57,19 @@ from config import (
 from ptz import PtzClient, PtzError
 from video import VideoWorker, find_ffmpeg
 from audio import AudioWorker
+from zoom import (
+    ZOOM_STEP,
+    clamp_pan,
+    clamp_zoom,
+    label_delta_to_source,
+    label_to_oriented,
+    pan_by,
+    remap_pan_for_rotation,
+    reset_view,
+    view_rect,
+    view_rect_int,
+    zoom_at,
+)
 
 log = logging.getLogger("cctv.app")
 
@@ -246,6 +269,11 @@ class Viewer(QMainWindow):
         self._last_image: QImage | None = None
         # Display-only orientation. Always one of {0, 90, 180, 270}; never a click counter.
         self._rotation_deg = 0
+        # Display-only digital zoom/pan. Session-only; never written to disk.
+        self._zoom = 1.0
+        self._pan_x = 0.0
+        self._pan_y = 0.0
+        self._pan_drag: QPointF | None = None
         self._ptz_press_t: float | None = None
         self._ptz_held: str | None = None
         self._nudge_timer = QTimer(self)
@@ -292,6 +320,8 @@ class Viewer(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self.video_label.setScaledContents(False)
+        self.video_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.video_label.installEventFilter(self)
         body.addWidget(self.video_label, 1)
         body.addWidget(self._build_side())
 
@@ -420,8 +450,34 @@ class Viewer(QMainWindow):
         rot_row.addWidget(self.rot_label)
         v.addLayout(rot_row)
 
+        zoom_row = QHBoxLayout()
+        self.btn_zoom_out = QPushButton("−")
+        self.btn_zoom_in = QPushButton("+")
+        self.btn_zoom_reset = QPushButton("원본(1x)")
+        for b in (self.btn_zoom_out, self.btn_zoom_in, self.btn_zoom_reset):
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_zoom_out.setToolTip("화면 축소 (스트림은 유지)")
+        self.btn_zoom_in.setToolTip("화면 확대 (스트림은 유지)")
+        self.btn_zoom_reset.setToolTip("줌/팬을 원본 배율로 되돌림")
+        self.btn_zoom_out.clicked.connect(lambda: self._bump_zoom(1.0 / ZOOM_STEP))
+        self.btn_zoom_in.clicked.connect(lambda: self._bump_zoom(ZOOM_STEP))
+        self.btn_zoom_reset.clicked.connect(self._reset_zoom)
+        self.zoom_label = QLabel("1.0x")
+        self.zoom_label.setFixedWidth(40)
+        self.zoom_label.setStyleSheet("color:#c8d0d8; font-size:12px;")
+        self.zoom_label.setToolTip("현재 화면 확대 배율")
+        zoom_row.addWidget(self.btn_zoom_out)
+        zoom_row.addWidget(self.btn_zoom_in)
+        zoom_row.addWidget(self.btn_zoom_reset, 1)
+        zoom_row.addWidget(self.zoom_label)
+        v.addLayout(zoom_row)
+
         v.addStretch(1)
-        hint = QLabel("←↑↓→ 이동  ·  space 정지\n1 안방  ·  2 거실  ·  S 스냅샷")
+        hint = QLabel(
+            "←↑↓→ 이동  ·  space 정지\n"
+            "1 안방  ·  2 거실  ·  S 스냅샷\n"
+            "휠 줌 · 드래그 이동 · 더블클릭 원본"
+        )
         hint.setStyleSheet("color:#6a7380; font-size:11px;")
         hint.setWordWrap(True)
         v.addWidget(hint)
@@ -600,7 +656,20 @@ class Viewer(QMainWindow):
 
     def _rotate_view(self, delta: int) -> None:
         """Rotate the live view by ±90°. State stays in {0, 90, 180, 270} via modulo 360."""
-        self._rotation_deg = (self._rotation_deg + delta) % 360
+        old = self._rotation_deg
+        new = (old + delta) % 360
+        img = self._last_image
+        if img is not None and not img.isNull() and self._zoom > 1.0:
+            self._pan_x, self._pan_y = remap_pan_for_rotation(
+                self._pan_x,
+                self._pan_y,
+                img.width(),
+                img.height(),
+                old,
+                new,
+                self._zoom,
+            )
+        self._rotation_deg = new
         self.rot_label.setText(f"{self._rotation_deg}°")
         self._paint_frame()
 
@@ -609,11 +678,32 @@ class Viewer(QMainWindow):
             return img.transformed(QTransform().rotate(self._rotation_deg))
         return img
 
+    def _oriented_size(self) -> tuple[int, int] | None:
+        img = self._last_image
+        if img is None or img.isNull():
+            return None
+        w, h = img.width(), img.height()
+        if self._rotation_deg in (90, 270):
+            return h, w
+        return w, h
+
     def _paint_frame(self) -> None:
         img = self._last_image
         if img is None or img.isNull():
             return
-        pix = QPixmap.fromImage(self._oriented_image(img))
+        oriented = self._oriented_image(img)
+        src_w, src_h = oriented.width(), oriented.height()
+        self._pan_x, self._pan_y = clamp_pan(
+            self._pan_x, self._pan_y, src_w, src_h, self._zoom
+        )
+        if self._zoom > 1.0:
+            x, y, w, h = view_rect_int(
+                src_w, src_h, self._zoom, self._pan_x, self._pan_y
+            )
+            oriented = oriented.copy(x, y, w, h)
+            if oriented.isNull():
+                return
+        pix = QPixmap.fromImage(oriented)
         target = self.video_label.size()
         if target.width() < 2 or target.height() < 2:
             return
@@ -624,6 +714,116 @@ class Viewer(QMainWindow):
                 Qt.TransformationMode.FastTransformation,
             )
         )
+
+    def _sync_zoom_ui(self) -> None:
+        self.zoom_label.setText(f"{self._zoom:.1f}x")
+        if self._zoom > 1.0:
+            cursor = (
+                Qt.CursorShape.ClosedHandCursor
+                if self._pan_drag is not None
+                else Qt.CursorShape.OpenHandCursor
+            )
+        else:
+            cursor = Qt.CursorShape.ArrowCursor
+        self.video_label.setCursor(cursor)
+
+    def _bump_zoom(self, factor: float, anchor_label: QPointF | None = None) -> None:
+        new_z = clamp_zoom(self._zoom * factor)
+        size = self._oriented_size()
+        if size is None:
+            self._zoom = new_z
+            if new_z <= 1.0:
+                self._pan_x = self._pan_y = 0.0
+            self._sync_zoom_ui()
+            return
+        src_w, src_h = size
+        if anchor_label is not None:
+            ax, ay = label_to_oriented(
+                anchor_label.x(),
+                anchor_label.y(),
+                src_w,
+                src_h,
+                self.video_label.width(),
+                self.video_label.height(),
+                self._zoom,
+                self._pan_x,
+                self._pan_y,
+            )
+        else:
+            vx, vy, vw, vh = view_rect(
+                src_w, src_h, self._zoom, self._pan_x, self._pan_y
+            )
+            ax, ay = vx + vw / 2.0, vy + vh / 2.0
+        self._zoom, self._pan_x, self._pan_y = zoom_at(
+            self._zoom, self._pan_x, self._pan_y, src_w, src_h, new_z, ax, ay
+        )
+        self._sync_zoom_ui()
+        self._paint_frame()
+
+    def _reset_zoom(self) -> None:
+        self._zoom, self._pan_x, self._pan_y = reset_view()
+        self._pan_drag = None
+        self._sync_zoom_ui()
+        self._paint_frame()
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        if obj is not self.video_label:
+            return super().eventFilter(obj, event)
+        et = event.type()
+        if et == QEvent.Type.Wheel:
+            self._on_video_wheel(event)
+            return True
+        if et == QEvent.Type.MouseButtonDblClick:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._reset_zoom()
+                return True
+        elif et == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._pan_drag = event.position()
+                self._sync_zoom_ui()
+                return True
+        elif et == QEvent.Type.MouseMove:
+            if self._pan_drag is not None and self._zoom > 1.0:
+                self._on_video_pan(event)
+                return True
+        elif et == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._pan_drag = None
+                self._sync_zoom_ui()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _on_video_wheel(self, event: QWheelEvent) -> None:
+        delta = event.angleDelta().y()
+        if delta == 0:
+            delta = event.pixelDelta().y()
+        if delta == 0:
+            return
+        factor = ZOOM_STEP if delta > 0 else 1.0 / ZOOM_STEP
+        self._bump_zoom(factor, event.position())
+
+    def _on_video_pan(self, event: QMouseEvent) -> None:
+        size = self._oriented_size()
+        if size is None or self._pan_drag is None:
+            return
+        pos = event.position()
+        dx = pos.x() - self._pan_drag.x()
+        dy = pos.y() - self._pan_drag.y()
+        self._pan_drag = QPointF(pos)
+        src_w, src_h = size
+        dsx, dsy = label_delta_to_source(
+            dx,
+            dy,
+            src_w,
+            src_h,
+            self.video_label.width(),
+            self.video_label.height(),
+            self._zoom,
+        )
+        self._pan_x, self._pan_y = pan_by(
+            self._pan_x, self._pan_y, src_w, src_h, self._zoom, dsx, dsy
+        )
+        self._paint_frame()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -639,6 +839,7 @@ class Viewer(QMainWindow):
         self.status.setText(msg)
 
     def _snapshot(self) -> None:
+        # Full uncropped frame (current rotation). Digital zoom/pan is display-only.
         img = self._last_image
         if img is None or img.isNull():
             self._set_status("스냅샷: 아직 프레임 없음")
