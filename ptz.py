@@ -29,6 +29,35 @@ RECV_TIMEOUT = 4.0
 
 DIRS = ("LEFT", "RIGHT", "UP", "DOWN", "STOP")
 
+# Clockwise compass. Visual dir → camera dir is (idx - n) % 4
+# where n = (rotation_deg // 90) % 4 (Qt +rotate = CW on the displayed image).
+#
+# visual | n=0 | n=1 (+90 CW) | n=2 (+180) | n=3 (+270 CW)
+# UP     | UP  | LEFT         | DOWN       | RIGHT
+# RIGHT  | RIGHT| UP          | LEFT       | DOWN
+# DOWN   | DOWN | RIGHT       | UP         | LEFT
+# LEFT   | LEFT | DOWN        | RIGHT      | UP
+_PTZ_COMPASS = ("UP", "RIGHT", "DOWN", "LEFT")
+
+
+def remap_ptz_dir(visual_dir: str, rotation_deg: int) -> str:
+    """Map on-screen PTZ direction to the camera-native command.
+
+    After a digital clockwise rotation of n*90°, a visual arrow must send the
+    camera command that moves the *picture* in that visual direction.
+    Always uses ``// 90 % 4`` — never a growing click counter.
+    STOP and unknown tokens pass through unchanged.
+    """
+    d = visual_dir.upper().strip()
+    if d == "STOP":
+        return "STOP"
+    try:
+        idx = _PTZ_COMPASS.index(d)
+    except ValueError:
+        return visual_dir
+    n = (int(rotation_deg) // 90) % 4
+    return _PTZ_COMPASS[(idx - n) % 4]
+
 
 def _md5(s: str) -> str:
     return hashlib.md5(s.encode("utf-8")).hexdigest()
