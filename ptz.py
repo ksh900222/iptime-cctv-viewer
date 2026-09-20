@@ -1,9 +1,9 @@
-"""iptime C500 / Yoosee HIipCamera PTZ over a dedicated RTSP socket.
+"""iptime C500GS / Yoosee HIipCamera PTZ over a dedicated RTSP socket.
 
-Verified path (거실 192.168.0.28):
+Verified on **iptime C500GS** (거실 192.168.0.28, 안방 192.168.0.27):
   Digest DESCRIBE 200 → SETUP track1 (RTP/AVP/TCP interleaved) → Session
   → SET_PARAMETER  Content-type: ptzCmd: DIR
-  (tilt down must be DWON — firmware typo; DOWN is ignored)
+  (tilt down must be DWON — C500GS firmware typo; DOWN is ignored)
                    Content-Length: len(that Content-type value)
 
 Bare SET_PARAMETER without SETUP often returns 200 but does not move motors.
@@ -30,8 +30,8 @@ RECV_TIMEOUT = 4.0
 
 DIRS = ("LEFT", "RIGHT", "UP", "DOWN", "STOP")
 
-# Yoosee / HIipCamera firmware accepts tilt-down as the misspelling "DWON",
-# not "DOWN". UI and remap keep the logical name DOWN; only the wire token differs.
+# C500GS (Yoosee / HIipCamera) accepts tilt-down as the misspelling "DWON",
+# not "DOWN" — verified on C500GS. UI/remap keep logical DOWN; wire token differs.
 _WIRE_DIR = {"DOWN": "DWON"}
 
 # Clockwise compass. Visual dir → camera dir is (idx - n) % 4

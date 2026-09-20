@@ -1,6 +1,6 @@
-# iptime C500 CCTV Viewer (macOS)
+# iptime C500 / C500GS CCTV Viewer (macOS)
 
-One-window PyQt6 viewer for **iptime C500** (and similar ONVIF/RTSP) cameras on a Mac:
+One-window PyQt6 viewer for **iptime C500GS** (and similar C500 / ONVIF/RTSP) cameras on a Mac:
 
 - Live **HEVC** video over RTSP/TCP (`ffmpeg` + VideoToolbox)
 - Live **audio** from the **same** ffmpeg session (FIFO → Qt `QAudioSink`) — dual RTSP clients starve audio on these cams
@@ -11,6 +11,8 @@ One-window PyQt6 viewer for **iptime C500** (and similar ONVIF/RTSP) cameras on 
 - Fast camera switching (clean ffmpeg teardown / RTSP TEARDOWN)
 
 Built and tested on Apple Silicon Mac mini with Homebrew ffmpeg.
+
+**Verified on iptime C500GS** (Yoosee / HIipCamera RTSP): live A/V, PTZ pad/keys, live-view rotate, digital zoom/pan. Tilt-down on the wire must be `DWON` (firmware typo); `DOWN` returns 200 but does not move.
 
 
 ## Launchers
