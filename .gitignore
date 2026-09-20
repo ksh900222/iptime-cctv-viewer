@@ -1,0 +1,29 @@
+# secrets / local machine
+config.py
+__pycache__/
+*.pyc
+.Python
+.venv/
+venv/
+
+# runtime / logs / agent scratch
+*.log
+*.pid
+*.out
+*.typescript
+grok*
+OPUS_*
+_patch*.py
+_audio_selftest.py
+run_cursor_agent_stable.sh
+run_grok_build.sh
+run_grok_pty.py
+GrokBuild*.command
+GROK_*.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# snapshots are user data
+snapshots/
