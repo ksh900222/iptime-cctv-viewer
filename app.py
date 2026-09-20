@@ -54,7 +54,7 @@ from config import (
     Camera,
     default_camera,
 )
-from ptz import PtzClient, PtzError
+from ptz import PtzClient, PtzError, remap_ptz_dir
 from video import VideoWorker, find_ffmpeg
 from audio import AudioWorker
 from zoom import (
@@ -614,8 +614,9 @@ class Viewer(QMainWindow):
             return
         self._nudge_timer.stop()
         self._ptz_press_t = time.monotonic()
+        # Track the visual dir so press/release still match after remapping.
         self._ptz_held = direction
-        self.ptz.move(direction)
+        self.ptz.move(remap_ptz_dir(direction, self._rotation_deg))
         self._hold_cap.start(int(MAX_HOLD_SECONDS * 1000))
 
     def _ptz_release(self, direction: str) -> None:

@@ -51,10 +51,10 @@ python3 app.py
 | Input | Action |
 |------|--------|
 | Camera buttons / `1` `2` | Switch camera |
-| Arrow keys or on-screen pad | Hold to move PTZ, release = STOP; short tap ≈ nudge |
+| Arrow keys or on-screen pad | Hold to move PTZ, release = STOP; short tap ≈ nudge. Directions follow the **on-screen** orientation after live-view rotate (visual Up/Down/Left/Right move the picture that way). |
 | `Space` / STOP | Stop PTZ |
 | Volume slider | Live gain (no reconnect) |
-| `↺ 90°` / `↻ 90°` | Rotate the live view −90° / +90°. One integer state in `{0, 90, 180, 270}` (modulo 360); four clicks in one direction return to the original orientation. Does not restart ffmpeg/RTSP. Session-only (not written to disk). Snapshots use the same orientation. |
+| `↺ 90°` / `↻ 90°` | Rotate the live view −90° / +90°. One integer state in `{0, 90, 180, 270}` (modulo 360); four clicks in one direction return to the original orientation. Does not restart ffmpeg/RTSP. Session-only (not written to disk). Snapshots use the same orientation. The PTZ pad and arrow keys follow this on-screen orientation. |
 | Mouse wheel over video | Zoom in/out around the cursor (1.0× … 8.0×). Display-path only; ffmpeg/RTSP stays up. |
 | Click-drag on video | Pan the zoomed view. Offsets clamp so the frame never scrolls into empty space. At 1.0×, pan is a no-op. |
 | `+` / `−` | Zoom in/out around the view center. Same bounds as the wheel. |
