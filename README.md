@@ -40,7 +40,9 @@ cp config.example.py config.py
 python3 app.py
 ```
 
-Or double-click `CCTV뷰어.command` after editing `config.py`.
+**더블클릭: `CCTV뷰어.app` 권장** (Finder / Desktop / Dock에서 CCTV 카메라 아이콘이 보입니다).
+
+`CCTV뷰어.command` is a macOS **shell script** that opens in Terminal when double-clicked — not a compiled app. Finder usually shows a generic script icon for `.command` files. The `.app` bundle is the durable launcher: it runs `python3 app.py` from this folder and ships `AppIcon.icns` inside the bundle. See `ICON_NOTES.md`.
 
 `config.py` is gitignored. Never commit real passwords.
 

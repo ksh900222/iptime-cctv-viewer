@@ -21,6 +21,9 @@ run_grok_pty.py
 GrokBuild*.command
 GROK_*.md
 
+# generated iconset (icns + 1024 PNG are committed)
+icons/AppIcon.iconset/
+
 # OS
 .DS_Store
 Thumbs.db
