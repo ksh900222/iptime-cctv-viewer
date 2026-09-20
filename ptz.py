@@ -3,6 +3,7 @@
 Verified path (거실 192.168.0.28):
   Digest DESCRIBE 200 → SETUP track1 (RTP/AVP/TCP interleaved) → Session
   → SET_PARAMETER  Content-type: ptzCmd: DIR
+  (tilt down must be DWON — firmware typo; DOWN is ignored)
                    Content-Length: len(that Content-type value)
 
 Bare SET_PARAMETER without SETUP often returns 200 but does not move motors.
@@ -28,6 +29,10 @@ CONNECT_TIMEOUT = 5.0
 RECV_TIMEOUT = 4.0
 
 DIRS = ("LEFT", "RIGHT", "UP", "DOWN", "STOP")
+
+# Yoosee / HIipCamera firmware accepts tilt-down as the misspelling "DWON",
+# not "DOWN". UI and remap keep the logical name DOWN; only the wire token differs.
+_WIRE_DIR = {"DOWN": "DWON"}
 
 # Clockwise compass. Visual dir → camera dir is (idx - n) % 4
 # where n = (rotation_deg // 90) % 4 (Qt +rotate = CW on the displayed image).
@@ -137,7 +142,8 @@ class PtzClient:
             raise PtzError(f"unknown dir {direction}")
         if self.sock is None:
             self.connect()
-        ct = f"ptzCmd: {direction}"
+        wire = _WIRE_DIR.get(direction, direction)
+        ct = f"ptzCmd: {wire}"
         r = self._set_parameter(ct)
         if r.status in (0, 401) or r.status >= 400:
             # nonce/session lost — full SETUP again, then retry once
@@ -147,7 +153,8 @@ class PtzClient:
             r = self._user_cmd_set(direction)
         if r.status != 200:
             raise PtzError(f"{direction} → {r.status} {r.reason}".strip())
-        msg = f"{direction} → {r.status} {r.reason} sess={self.session}"
+        shown = direction if wire == direction else f"{direction}({wire})"
+        msg = f"{shown} → {r.status} {r.reason} sess={self.session}"
         self.last_status = msg
         return msg
 
@@ -215,7 +222,10 @@ class PtzClient:
         )
 
     def _user_cmd_set(self, direction: str) -> "PtzClient.Resp":
-        cmd = "Stop" if direction == "STOP" else direction
+        if direction == "STOP":
+            cmd = "Stop"
+        else:
+            cmd = _WIRE_DIR.get(direction, direction)
         ct = f"ptzCmd: {cmd}"
         return self._request(
             "USER_CMD_SET",

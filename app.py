@@ -264,6 +264,7 @@ class Viewer(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("iptime C500 뷰어")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.resize(1280, 820)
         self.cam = default_camera()
         self._last_image: QImage | None = None
@@ -277,6 +278,10 @@ class Viewer(QMainWindow):
         self._ptz_press_t: float | None = None
         self._ptz_held: str | None = None
         self._nudge_timer = QTimer(self)
+        self._ptz_repeat = QTimer(self)
+        self._ptz_repeat.setInterval(280)
+        self._ptz_repeat.timeout.connect(self._ptz_repeat_tick)
+        self._ptz_cam_dir: str | None = None
         self._nudge_timer.setSingleShot(True)
         self._nudge_timer.timeout.connect(self._nudge_stop)
         self._hold_cap = QTimer(self)
@@ -404,6 +409,7 @@ class Viewer(QMainWindow):
         vol_l = QLabel("볼륨")
         vol_l.setStyleSheet("color:#9aa3ad; font-size:12px;")
         self.vol_slider = QSlider(Qt.Orientation.Horizontal)
+        self.vol_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.vol_slider.setRange(0, 100)
         self.vol_slider.setValue(100)
         self.vol_slider.setFixedHeight(22)
@@ -613,16 +619,29 @@ class Viewer(QMainWindow):
         if not self._ptz_ok():
             return
         self._nudge_timer.stop()
+        self._ptz_repeat.stop()
         self._ptz_press_t = time.monotonic()
         # Track the visual dir so press/release still match after remapping.
         self._ptz_held = direction
-        self.ptz.move(remap_ptz_dir(direction, self._rotation_deg))
+        cam_dir = remap_ptz_dir(direction, self._rotation_deg)
+        self._ptz_cam_dir = cam_dir
+        self._set_status(f"PTZ {direction}" + (f" → {cam_dir}" if cam_dir != direction else ""))
+        self.ptz.move(cam_dir)
+        # Re-send while held — some iptime firmwares ignore a single DOWN.
+        self._ptz_repeat.start()
         self._hold_cap.start(int(MAX_HOLD_SECONDS * 1000))
+
+    def _ptz_repeat_tick(self) -> None:
+        if self._ptz_held and self._ptz_cam_dir:
+            self.ptz.move(self._ptz_cam_dir)
+
 
     def _ptz_release(self, direction: str) -> None:
         if self._ptz_held != direction:
             return
         self._hold_cap.stop()
+        self._ptz_repeat.stop()
+        self._ptz_cam_dir = None
         t0 = self._ptz_press_t or time.monotonic()
         held = time.monotonic() - t0
         remain = NUDGE_SECONDS - held
@@ -638,13 +657,17 @@ class Viewer(QMainWindow):
 
     def _safety_stop(self) -> None:
         self._ptz_held = None
+        self._ptz_cam_dir = None
         self._nudge_timer.stop()
+        self._ptz_repeat.stop()
         self.ptz.stop()
         self._set_status("PTZ 안전 정지 (최대 유지 시간)")
 
     def _ptz_force_stop(self) -> None:
         self._ptz_held = None
+        self._ptz_cam_dir = None
         self._nudge_timer.stop()
+        self._ptz_repeat.stop()
         self._hold_cap.stop()
         self.ptz.stop()
 
@@ -673,6 +696,7 @@ class Viewer(QMainWindow):
         self._rotation_deg = new
         self.rot_label.setText(f"{self._rotation_deg}°")
         self._paint_frame()
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _oriented_image(self, img: QImage) -> QImage:
         if self._rotation_deg:
@@ -853,6 +877,35 @@ class Viewer(QMainWindow):
             self._set_status(f"저장 {path}")
         else:
             self._set_status("스냅샷 저장 실패")
+
+    def event(self, event: QEvent) -> bool:  # noqa: N802
+        # Arrow keys must always drive PTZ, even if a slider had focus.
+        if event.type() == QEvent.Type.KeyPress:
+            if isinstance(event, QKeyEvent) and not event.isAutoRepeat():
+                mapping = {
+                    Qt.Key.Key_Left: "LEFT",
+                    Qt.Key.Key_Right: "RIGHT",
+                    Qt.Key.Key_Up: "UP",
+                    Qt.Key.Key_Down: "DOWN",
+                }
+                if event.key() in mapping:
+                    self._ptz_press(mapping[event.key()])
+                    return True
+                if event.key() == Qt.Key.Key_Space:
+                    self._ptz_force_stop()
+                    return True
+        if event.type() == QEvent.Type.KeyRelease:
+            if isinstance(event, QKeyEvent) and not event.isAutoRepeat():
+                mapping = {
+                    Qt.Key.Key_Left: "LEFT",
+                    Qt.Key.Key_Right: "RIGHT",
+                    Qt.Key.Key_Up: "UP",
+                    Qt.Key.Key_Down: "DOWN",
+                }
+                if event.key() in mapping:
+                    self._ptz_release(mapping[event.key()])
+                    return True
+        return super().event(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if event.isAutoRepeat():
