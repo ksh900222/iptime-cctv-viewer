@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
 os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH", "")
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize
-from PyQt6.QtGui import QImage, QKeyEvent, QPixmap, QFont, QCloseEvent, QAction
+from PyQt6.QtGui import QImage, QKeyEvent, QPixmap, QFont, QCloseEvent, QAction, QTransform
 from PyQt6.QtWidgets import (
     QApplication,
     QGridLayout,
@@ -244,6 +244,8 @@ class Viewer(QMainWindow):
         self.resize(1280, 820)
         self.cam = default_camera()
         self._last_image: QImage | None = None
+        # Display-only orientation. Always one of {0, 90, 180, 270}; never a click counter.
+        self._rotation_deg = 0
         self._ptz_press_t: float | None = None
         self._ptz_held: str | None = None
         self._nudge_timer = QTimer(self)
@@ -399,6 +401,24 @@ class Viewer(QMainWindow):
         recon.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         recon.clicked.connect(self._reconnect_video)
         v.addWidget(recon)
+
+        rot_row = QHBoxLayout()
+        self.btn_rot_ccw = QPushButton("↺ 90°")
+        self.btn_rot_cw = QPushButton("↻ 90°")
+        for b in (self.btn_rot_ccw, self.btn_rot_cw):
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_rot_ccw.setToolTip("화면을 반시계 방향으로 90° 회전 (스트림은 유지)")
+        self.btn_rot_cw.setToolTip("화면을 시계 방향으로 90° 회전 (스트림은 유지)")
+        self.btn_rot_ccw.clicked.connect(lambda: self._rotate_view(-90))
+        self.btn_rot_cw.clicked.connect(lambda: self._rotate_view(90))
+        self.rot_label = QLabel("0°")
+        self.rot_label.setFixedWidth(40)
+        self.rot_label.setStyleSheet("color:#c8d0d8; font-size:12px;")
+        self.rot_label.setToolTip("현재 화면 회전 각도")
+        rot_row.addWidget(self.btn_rot_ccw, 1)
+        rot_row.addWidget(self.btn_rot_cw, 1)
+        rot_row.addWidget(self.rot_label)
+        v.addLayout(rot_row)
 
         v.addStretch(1)
         hint = QLabel("←↑↓→ 이동  ·  space 정지\n1 안방  ·  2 거실  ·  S 스냅샷")
@@ -578,11 +598,22 @@ class Viewer(QMainWindow):
         self._last_image = img
         self._paint_frame()
 
+    def _rotate_view(self, delta: int) -> None:
+        """Rotate the live view by ±90°. State stays in {0, 90, 180, 270} via modulo 360."""
+        self._rotation_deg = (self._rotation_deg + delta) % 360
+        self.rot_label.setText(f"{self._rotation_deg}°")
+        self._paint_frame()
+
+    def _oriented_image(self, img: QImage) -> QImage:
+        if self._rotation_deg:
+            return img.transformed(QTransform().rotate(self._rotation_deg))
+        return img
+
     def _paint_frame(self) -> None:
         img = self._last_image
         if img is None or img.isNull():
             return
-        pix = QPixmap.fromImage(img)
+        pix = QPixmap.fromImage(self._oriented_image(img))
         target = self.video_label.size()
         if target.width() < 2 or target.height() < 2:
             return
@@ -615,6 +646,7 @@ class Viewer(QMainWindow):
         SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         path = SNAPSHOT_DIR / f"{self.cam.key}_{ts}.jpg"
+        img = self._oriented_image(img)
         if img.save(str(path), "JPG", 90):
             self._set_status(f"저장 {path}")
         else:
