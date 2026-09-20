@@ -27,3 +27,7 @@ Thumbs.db
 
 # snapshots are user data
 snapshots/
+_osd_raw_check.png
+CURSOR_GROK*.md
+OSD_ORIGIN_CHECK.md
+ICON_NOTES.md.bak

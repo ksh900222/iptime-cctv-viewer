@@ -12,6 +12,12 @@ One-window PyQt6 viewer for **iptime C500** (and similar ONVIF/RTSP) cameras on 
 
 Built and tested on Apple Silicon Mac mini with Homebrew ffmpeg.
 
+
+## Launchers
+
+- `CCTV뷰어.command` — macOS double-click shell script (opens Terminal, runs the viewer, **closes that Terminal window when the viewer exits**).
+- Prefer `CCTV뷰어.app` when present (custom icon, no Terminal window).
+
 ## Requirements
 
 - macOS (Apple Silicon recommended)
